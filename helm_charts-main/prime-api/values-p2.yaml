@@ -1,0 +1,121 @@
+serviceAccount:
+  name: app-s3-sa
+image:
+  repository: 783764580882.dkr.ecr.ap-south-1.amazonaws.com/prime360novac/prime-api
+  tag: 9d95fe2aeb45f8a36a5e7700ab90a40cd109c0ca
+  pullPolicy: Always
+terminationGracePeriodSeconds: 120
+preStopHook:
+  sleepSeconds: 90
+imagePullSecrets:
+  - name: ecr-registry-secret
+container:
+  name: prime-api-p2
+  port: 2469
+resources:
+  limits:
+    # cpu: 6600m
+    memory: 54359Mi
+  requests:
+    cpu: 6600m
+    memory: 54359Mi
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+  - name: CONFIGSERVERURL
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: CONFIGSERVERURL
+  - name: EUREKASERVERURL
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+  - name: PARTITION_NUMBER
+    value: "2"
+  - name: ENGINE_PATH
+    value: engine2
+  - name: SERVER_SERVLET_CONTEXTPATH
+    value: /engine2
+  - name: PORT
+    value: "2469"
+  - name: JAVA_OPTS
+    value: "-Xms51g -Xmx51g"
+service:
+  name: prime-api-p2-svc
+  port: 2469
+  targetPort: 2469
+  protocol: TCP
+nodeSelector:
+  group: prime-api-p2
+#  group: prime-api-p2
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+
+s3:
+  enabled: true
+  mountPath: /app/Objects
+  subPath: object-files/
+efs:
+  enabled: true
+  mountPath: /app/logs
+  subPath: prime-api-p2
+startupProbe:
+  port: 2469
+  periodSeconds: 3 # every 3s
+  timeoutSeconds: 2
+  failureThreshold: 60 # 60×3s = 180s max warm-up window
+readinessProbe:
+  endpoint: /primeapi/isTenantOccupied
+  expectingNonZeroOffline: true
+  expectingNonZeroOnline: false
+  initialDelaySeconds: 120
+  periodSeconds: 10 # check every 10s
+  timeoutSeconds: 3
+  successThreshold: 1
+  failureThreshold: 20 # ~50s of failures before marking NotReady
+livenessProbe:
+  path: /engine2/actuator/health/liveness
+  port: 2469
+  initialDelaySeconds: 360
+  periodSeconds: 30
+  timeoutSeconds: 15
+  failureThreshold: 1
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 30
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 10
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10

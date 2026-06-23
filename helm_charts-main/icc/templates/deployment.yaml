@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: icc
+  labels:
+    app: icc
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: icc
+  template:
+    metadata:
+      labels:
+        app: icc
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 30 }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      containers:
+        - name: {{ .Values.container.name }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.container.port }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+          {{- if .Values.preStopHook }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "{{ .Values.preStopHook.sleepSeconds }}"]
+          {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: {{ .Values.container.port }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: {{ .Values.container.port }}
+              httpHeaders:
+                {{- toYaml .Values.readinessProbe.httpHeaders | nindent 16 }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            successThreshold: {{ .Values.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.container.port }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+
+          volumeMounts:
+            {{- if .Values.efs.enabled }}
+            - name: efs-logs
+              mountPath: {{ .Values.efs.mountPath }}
+              subPath: {{ .Values.efs.subPath }}
+            {{- end }}
+            {{- if .Values.s3.enabled }}
+            {{- toYaml .Values.s3.mounts | nindent 12 }}
+            {{- end }}
+
+      volumes:
+        {{- if .Values.efs.enabled }}
+        - name: efs-logs
+          persistentVolumeClaim:
+            claimName: efs-logs-pvc
+        {{- end }}
+        {{- if .Values.s3.enabled }}
+        - name: s3-data-files
+          persistentVolumeClaim:
+            claimName: s3-config-files-pvc
+        {{- end }}

@@ -1,0 +1,4 @@
+include:
+  - project: 'AWS_Prime360Nova1.0C/ci-configurations'
+    file: 'services-pipeline.yml'
+    ref: 'main'

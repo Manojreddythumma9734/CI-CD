@@ -1,0 +1,97 @@
+serviceAccount:
+  name: app-s3-sa
+replicaCount: 1
+image:
+  repository: 783764580882.dkr.ecr.ap-south-1.amazonaws.com/prime360novac/hash-object-factory
+  tag: 9db009089ac9963afb33667851f3e2c6d10a4313
+  pullPolicy: Always
+terminationGracePeriodSeconds: 120
+preStopHook:
+  sleepSeconds: 90
+imagePullSecrets:
+  - name: ecr-registry-secret
+container:
+  name: hash-object-factory
+  port: 2489
+resources:
+  limits:
+    # cpu: 8000m
+    memory: 115000Mi
+  requests:
+    cpu: 8000m
+    memory: 96000Mi
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+  - name: CONFIGSERVERURL
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: CONFIGSERVERURL
+  - name: EUREKASERVERURL
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+  - name: JAVA_OPTS
+    value: "-Xms96g -Xmx96g -Dserver.port=2489"
+volumeMounts:
+  - mountPath: /app/logs
+    name: efs-logs
+    subPath: hash-object-factory
+  - mountPath: /app/Objects
+    name: s3-config-files
+    subPath: object-files/
+  - mountPath: /app/data
+    name: s3-config-files
+    subPath: data-files/
+volumes:
+  - name: efs-logs
+    persistentVolumeClaim:
+      claimName: efs-logs-pvc
+  - name: s3-config-files
+    persistentVolumeClaim:
+      claimName: s3-config-files-pvc
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+service:
+  name: hash-object-factory-svc
+  port: 2489
+  targetPort: 2489
+  protocol: TCP
+nodeSelector:
+  group: hof
+readinessProbe:
+  path: /hof/areYouInReadyState
+  port: 2489
+  httpHeaders:
+    - name: Accept
+      value: '*/*'
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 5
+# livenessProbe:
+#   path: /hof/actuator/health/liveness
+#   port: 2489
+#   periodSeconds: 30
+#   timeoutSeconds: 15
+#   failureThreshold: 1

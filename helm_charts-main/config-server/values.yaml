@@ -1,0 +1,66 @@
+serviceAccount:
+  name: app-s3-sa
+replicaCount: 1
+image:
+  repository: 783764580882.dkr.ecr.ap-south-1.amazonaws.com/prime360novac/config-server
+  tag: 4e07b010ded57d253afeceb7394fda05c48f7d4a
+  pullPolicy: Always
+imagePullSecrets:
+  - name: ecr-registry-secret
+container:
+  name: config-server
+  port: 2689
+resources:
+  limits:
+    #    cpu: 500m
+    memory: 1000Mi
+  requests:
+    cpu: 500m
+    memory: 500Mi
+env:
+  - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+  - name: JAVA_OPTS
+    value: "-XX:InitialRAMPercentage=60.0 -XX:MaxRAMPercentage=60.0"
+volumeMounts:
+  - mountPath: /app/config
+    name: s3-config-files
+    subPath: property-files/
+    # - mountPath: /app/logs
+    #   name: efs-logs
+    #   subPath: config-server
+volumes:
+  - name: s3-config-files
+    persistentVolumeClaim:
+      claimName: s3-config-files-pvc
+      # - name: efs-logs
+      #   persistentVolumeClaim:
+      #     claimName: efs-logs-pvc
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+service:
+  name: config-server-svc
+  port: 2689
+  targetPort: 2689
+  protocol: TCP
+nodeSelector:
+  group: common

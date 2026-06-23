@@ -1,0 +1,426 @@
+stages:
+  - docker-build-and-push
+  - collect-updated-services-list
+  - trigger-helm-charts-pipeline
+
+variables:
+  BRANCH: "main"
+  HELM_PROJECT_BRANCH: "testing"
+  HELM_PROJECT_PATH: "AWS_Prime360Nova1.0C/HELM_CHARTS"
+  CI_PROJECT_ID: "aws_prime360nova1.0c/helm_charts"
+
+.docker-buildkit-template: &docker-buildkit-template
+  image: docker:28.5
+  stage: docker-build-and-push
+  allow_failure: true
+  tags:
+    - aws-eks
+  variables:
+    DOCKER_BUILDKIT: 1
+    BUILDKIT_PROGRESS: plain
+    AWS_REGION: "ap-south-1"
+    AWS_ACCOUNT_ID: "783764580882"
+    ECR_NAMESPACE: "prime360novac"
+  before_script:
+    - apk add --no-cache bash aws-cli
+    - |
+      set -euo pipefail
+      
+      SERVICE_NAME="$CI_JOB_NAME"
+      ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      IMAGE_TAG="${ECR_REGISTRY}/${ECR_NAMESPACE}/${SERVICE_NAME}:${CI_COMMIT_SHA}"
+      
+      echo "=== Environment Check at $(date -u) UTC ==="
+      echo "Service: $SERVICE_NAME"
+      echo "ECR Registry: $ECR_REGISTRY"
+      echo "Image Tag: $IMAGE_TAG"
+      echo "Docker version: $(docker --version)"
+      echo "BuildKit enabled: ${DOCKER_BUILDKIT}"
+    
+    - |
+      echo "Checking Docker daemon connectivity..."
+      if ! docker info >/dev/null 2>&1; then
+        echo "ERROR: Docker daemon not accessible"
+        docker info || true
+        exit 1
+      fi
+      echo "Docker daemon is ready"
+    
+    - |
+      echo "Logging in to AWS ECR..."
+      aws ecr get-login-password --region "$AWS_REGION" | \
+        docker login --username AWS --password-stdin "$ECR_REGISTRY" || {
+        echo "ERROR: ECR login failed"
+        exit 1
+      }
+      echo "ECR login successful"
+    
+    - |
+      echo "=== Build Context Verification at $(date -u) UTC ==="
+      if [ ! -d "$SERVICE_NAME" ]; then
+        echo "ERROR: Build context $SERVICE_NAME does not exist"
+        echo "Available directories:"
+        ls -la . 2>/dev/null || echo "Current directory not accessible"
+        exit 1
+      fi
+      if [ ! -f "$SERVICE_NAME/Dockerfile" ]; then
+        echo "ERROR: Dockerfile not found in $SERVICE_NAME/"
+        echo "Contents of $SERVICE_NAME/:"
+        ls -la "$SERVICE_NAME/" 2>/dev/null || echo "Directory not accessible"
+        exit 1
+      fi
+      echo "Build context verified: $SERVICE_NAME"
+      echo "Dockerfile found: $SERVICE_NAME/Dockerfile"
+
+  script:
+    - |
+      set -euo pipefail
+      
+      SERVICE_NAME="$CI_JOB_NAME"
+      ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      IMAGE_TAG="${ECR_REGISTRY}/${ECR_NAMESPACE}/${SERVICE_NAME}:${CI_COMMIT_SHA}"
+      
+      echo "=== Starting Build Process at $(date -u) UTC ==="
+      echo "Building $SERVICE_NAME -> $IMAGE_TAG"
+      
+      cd "$SERVICE_NAME"
+      
+      # Build the Docker image (will fail automatically if build fails)
+      echo "Building Docker image with BuildKit..."
+      docker build --progress=plain --tag "${IMAGE_TAG}" . 2>&1 | tee ../build.log
+      
+      echo "Build completed successfully"
+      
+      # Push to ECR
+      echo "Pushing image to ECR..."
+      docker push "${IMAGE_TAG}"
+      echo "Successfully pushed: ${IMAGE_TAG}"
+      
+      # Tag as latest
+      LATEST_TAG="${ECR_REGISTRY}/${ECR_NAMESPACE}/${SERVICE_NAME}:latest"
+      echo "Tagging as latest: ${LATEST_TAG}"
+      docker tag "${IMAGE_TAG}" "${LATEST_TAG}"
+      docker push "${LATEST_TAG}"
+      
+      echo "=== Build Summary at $(date -u) UTC ==="
+      echo "Successfully built and pushed $SERVICE_NAME"
+      echo "Images pushed:"
+      echo "  - ${IMAGE_TAG}"
+      echo "  - ${LATEST_TAG}"
+      
+      # Create artifact marker
+      echo "${SERVICE_NAME}" > "../updated_${SERVICE_NAME}.txt"
+
+  after_script:
+    - cd .. 2>/dev/null || true
+    - rm -f build.log 2>/dev/null || true
+    - docker image prune -f --filter "until=24h" 2>/dev/null || true
+
+  artifacts:
+    paths:
+      - "updated_${CI_JOB_NAME}.txt"
+    expire_in: 1 hour
+    when: on_success    
+        
+bot:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - bot/**/*
+
+config-server:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - config-server/**/*
+
+crms-file-upload:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - crms-file-upload/**/*
+
+crms-login:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - crms-login/**/*
+
+crms-report:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - crms-report/**/*
+
+crms-ui:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - crms-ui/**/*
+
+uam-ui:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - uam-ui/**/*
+
+uam-backend:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - uam-backend/**/*
+
+crms-verification:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - crms-verification/**/*
+
+data-converter:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - data-converter/**/*
+
+gateway:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - gateway/**/*
+
+hash-object-factory:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - hash-object-factory/**/*
+
+icc:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - icc/**/*
+
+import-manager:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - import-manager/**/*
+
+ml:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - ml/**/*
+
+prime-api:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - prime-api/**/*
+
+prime360novac-ui:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - prime360novac-ui/**/*
+
+primever:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - primever/**/*
+
+psx-service-wrapper:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - psx-service-wrapper/**/*
+
+publish:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - publish/**/*
+
+pull:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - pull/**/*
+ra-ml:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - ra-ml/**/*
+
+request-builder:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - request-builder/**/*
+
+request-response-router:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - request-response-router/**/*
+
+response-handler:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - response-handler/**/*
+
+result-push:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - result-push/**/*
+
+results-aggregator:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - results-aggregator/**/*
+
+service-registry:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - service-registry/**/*
+
+ui-mf:
+  <<: *docker-buildkit-template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+      changes:
+        - ui-mf/**/*
+
+collect-updated-services-list:
+  image: alpine:latest
+  stage: collect-updated-services-list
+  when: always
+  tags:
+    - aws-eks
+  script:
+    - apk add bash --no-cache
+    - /bin/bash -c 'cat updated_*.txt 2>/dev/null | sort -u > updated_services.txt || true'
+    - /bin/bash -c 'echo "${CI_COMMIT_SHA}" > services_commit.txt'
+    - |
+      if [ -f updated_services.txt ] && [ -s updated_services.txt ]; then
+        echo "TRIGGERDOWNSTREAM=true" >> downstream.env
+        echo "UPDATED_SERVICES=$(tr '\n' ',' < updated_services.txt | sed 's/,$//')" >> downstream.env
+        echo "SERVICES_COMMIT_SHA=${CI_COMMIT_SHA}" >> downstream.env
+      else
+        echo "TRIGGERDOWNSTREAM=false" >> downstream.env
+      fi
+    - echo "UPSTREAM_PIPELINE_URL=${CI_PIPELINE_URL}" >> downstream.env
+    - echo "ENVIRONMENT=testing" >> downstream.env
+  artifacts:
+    reports:
+      dotenv: downstream.env
+    paths:
+      - updated_services.txt
+      - services_commit.txt
+    expire_in: 1 hour
+    when: always
+  needs:
+    - job: bot
+      optional: true
+    - job: config-server
+      optional: true
+    - job: crms-file-upload
+      optional: true
+    - job: crms-login
+      optional: true
+    - job: crms-report
+      optional: true
+    - job: crms-ui
+      optional: true
+    - job: uam-ui
+      optional: true
+    - job: uam-backend
+      optional: true  
+    - job: crms-verification
+      optional: true
+    - job: data-converter
+      optional: true
+    - job: gateway
+      optional: true
+    - job: hash-object-factory
+      optional: true
+    - job: icc
+      optional: true
+    - job: import-manager
+      optional: true
+    - job: ml
+      optional: true
+    - job: prime-api
+      optional: true
+    - job: prime360novac-ui
+      optional: true
+    - job: primever
+      optional: true
+    - job: psx-service-wrapper
+      optional: true
+    - job: publish
+      optional: true
+    - job: pull
+      optional: true
+    - job: ra-ml
+      optional: true
+    - job: request-builder
+      optional: true
+    - job: request-response-router
+      optional: true
+    - job: response-handler
+      optional: true
+    - job: result-push
+      optional: true  
+    - job: results-aggregator
+      optional: true
+    - job: service-registry
+      optional: true
+    - job: ui-mf
+      optional: true
+
+trigger-helm-charts-pipeline:
+  stage: trigger-helm-charts-pipeline
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $BRANCH'
+  trigger:
+    project: $HELM_PROJECT_PATH
+    branch: $HELM_PROJECT_BRANCH
+    strategy: depend
+    forward:
+      pipeline_variables: true 
+  needs:
+    - collect-updated-services-list

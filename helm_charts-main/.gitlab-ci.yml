@@ -1,0 +1,80 @@
+stages:
+  - update-helm-values
+
+variables:
+  GIT_USER_EMAIL: "cloud.admin@posidex.com"
+  GIT_USER_NAME: "cloudadmin"
+  SOURCE_BRANCH: "testing"
+  TARGET_BRANCH: "main"
+  CI_PROJECT_ID: "aws_prime360nova1.0c/helm_charts"
+  GITLAB_BASE_URL: "192.168.2.104:51080"
+
+update-helm-values:
+  image: alpine:latest
+  stage: update-helm-values
+  tags:
+    - aws-eks
+  before_script:
+    - echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    - apk update
+    - apk add --no-cache bash git yq curl jq
+    - git config --global user.email "$GIT_USER_EMAIL"
+    - git config --global user.name "$GIT_USER_NAME"
+    - git remote set-url origin "http://${GIT_USER_NAME}:${CI_TOKEN}@${GITLAB_BASE_URL}/${CI_PROJECT_ID}.git"
+  script:
+    - |
+      git fetch origin
+      git checkout ${SOURCE_BRANCH} 2>/dev/null || git checkout -b ${SOURCE_BRANCH}
+      git pull --rebase origin ${SOURCE_BRANCH} || true
+
+      #####################################################
+      # --- Triggered pipeline: update values.yaml ---    #
+      #####################################################
+
+      if [ "${TRIGGERDOWNSTREAM}" = "true" ] && [ -n "${UPDATED_SERVICES:-}" ] && [ -n "${SERVICES_COMMIT_SHA:-}" ]; then
+        UPDATED_LIST=""
+        for SERVICE in $(echo "$UPDATED_SERVICES" | tr "," "\n"); do
+          SERVICE=$(echo "$SERVICE" | xargs)
+          [ -z "$SERVICE" ] && continue
+          FILES=$( [ "$SERVICE" = "prime-api" ] && echo ${SERVICE}/values*.yaml || echo ${SERVICE}/values.yaml )
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+            TAG=$(yq eval ".image.tag" "$f" 2>/dev/null || echo "")
+            if [ "$TAG" != "$SERVICES_COMMIT_SHA" ]; then
+              yq -i ".image.tag = \"$SERVICES_COMMIT_SHA\"" "$f"
+              UPDATED_LIST="${UPDATED_LIST}${SERVICE}, "
+            fi
+          done
+        done
+        UPDATED_LIST=$(echo "$UPDATED_LIST" | sed 's/, $//')
+        if [ -n "$UPDATED_LIST" ]; then
+          git add .
+          git commit -m "ci: update ${UPDATED_LIST} to ${SERVICES_COMMIT_SHA:0:8} [skip ci]" || true
+          git push origin ${SOURCE_BRANCH} \
+            -o merge_request.create \
+            -o merge_request.target=${TARGET_BRANCH} \
+            -o "merge_request.title=ci: Updated Services to ${SERVICES_COMMIT_SHA:0:8}" \
+            -o "merge_request.description=Automated update triggered by pipeline.\n\nUpdated services:\n${UPDATED_LIST}\n\nCommit: ${SERVICES_COMMIT_SHA}" \
+            -o merge_request.label="automation,helm-charts" \
+            -o merge_request.remove_source_branch=false \
+            -o ci.skip || true
+        fi
+
+      #####################################################
+      # --- Manual push: create MR if none exists ---     #
+      #####################################################
+  
+      elif [ "${CI_PIPELINE_SOURCE}" = "push" ]; then
+        MR_ID=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" \
+          "${GITLAB_API_URL}/projects/${CI_PROJECT_ID//\//%2F}/merge_requests?source_branch=${SOURCE_BRANCH}&target_branch=${TARGET_BRANCH}&state=opened" \
+          | jq -r '.[0].iid // empty') || true
+        [ -z "$MR_ID" ] && curl -s -X POST --header "PRIVATE-TOKEN: $CI_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"source_branch\":\"${SOURCE_BRANCH}\",\"target_branch\":\"${TARGET_BRANCH}\",\"title\":\"Manual update for ${SOURCE_BRANCH}\",\"description\":\"Automatic MR creation for manual push\",\"remove_source_branch\":false,\"labels\":\"automation,helm-charts\"}" \
+          "${GITLAB_API_URL}/projects/${CI_PROJECT_ID//\//%2F}/merge_requests" || true
+      fi
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
+    - if: '$CI_COMMIT_BRANCH == $SOURCE_BRANCH'
+

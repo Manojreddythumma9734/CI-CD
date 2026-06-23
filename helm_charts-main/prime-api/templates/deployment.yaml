@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.container.name }}
+  labels:
+    app: {{ .Values.container.name }}
+spec:
+  #replicas: 0
+  selector:
+    matchLabels:
+      app: {{ .Values.container.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.container.name }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 30 }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      containers:
+        - name: {{ .Values.container.name }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.container.port }}
+          {{- if .Values.startupProbe }}
+          startupProbe:
+            tcpSocket:
+             port: {{ .Values.startupProbe.port }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  response=$(/usr/bin/curl -s -X POST "http://localhost:{{ .Values.container.port }}{{ (index .Values.env 4).value }}{{ .Values.readinessProbe.endpoint }}?ExpectingNonZeroOffline={{ .Values.readinessProbe.expectingNonZeroOffline }}&expectingNonZeroOnline={{ .Values.readinessProbe.expectingNonZeroOnline }}" -H "accept: */*" -d '')
+                  echo "Readiness probe response: $response" >&2
+                  if echo "$response" | grep -q '"areYouInReadyState":true'; then 
+                    echo "Service is ready" >&2
+                    exit 0
+                  else 
+                    echo "Service is not ready, response was: $response" >&2
+                    exit 1
+                  fi
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}     
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            successThreshold: {{ .Values.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: {{ .Values.livenessProbe.port }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+          {{- if .Values.preStopHook }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "{{ .Values.preStopHook.sleepSeconds }}"]
+          {{- end }}
+          {{- if or .Values.s3.enabled .Values.efs.enabled }}
+          volumeMounts:
+            {{- if .Values.s3.enabled }}
+            - name: s3-bucket
+              mountPath: {{ .Values.s3.mountPath }}
+              subPath: {{ .Values.s3.subPath }}
+            {{- end }}
+            {{- if .Values.efs.enabled }}
+            - name: efs-logs
+              mountPath: {{ .Values.efs.mountPath }}
+              subPath: {{ .Values.efs.subPath }}
+            {{- end }}
+          {{- end }}
+      volumes:
+        {{- if .Values.s3.enabled }}
+        - name: s3-bucket
+          persistentVolumeClaim:
+            claimName: s3-config-files-pvc
+        {{- end }}
+        {{- if .Values.efs.enabled }}
+        - name: efs-logs
+          persistentVolumeClaim:
+            claimName: efs-logs-pvc
+        {{- end }}

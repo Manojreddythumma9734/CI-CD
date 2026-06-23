@@ -1,0 +1,121 @@
+replicaCount: 1
+image:
+  repository: 783764580882.dkr.ecr.ap-south-1.amazonaws.com/prime360novac/import-manager
+  tag: 9d95fe2aeb45f8a36a5e7700ab90a40cd109c0ca
+  pullPolicy: Always
+imagePullSecrets:
+  - name: docker-registry
+terminationGracePeriodSeconds: 120
+preStopHook:
+  sleepSeconds: 90
+container:
+  name: import-manager
+  port: 9097
+resources:
+  limits:
+    # cpu: 500m
+    memory: 2000Mi
+  requests:
+    cpu: 1000m
+    memory: 2000Mi
+env:
+  - name: SPRING_CONFIG_IMPORT
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: SPRING_CONFIG_IMPORT
+  - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+  - name: JAVA_OPTS
+    value: "-XX:InitialRAMPercentage=60.0 -XX:MaxRAMPercentage=60.0"
+volumeMounts:
+  - mountPath: /app/logs
+    name: efs-logs
+    subPath: import-manager
+  - mountPath: /app/ImportManagerPropertyFiles
+    name: s3-data-files
+    subPath: property-files/ImportManagerPropertyFiles/
+  - mountPath: /mnt/eod/eod/templates
+    name: efs-eod-pvc
+    subPath: eod/templates
+  - mountPath: /mnt/eod/eod/Vcard_Report
+    name: efs-eod-pvc
+    subPath: eod/Vcard_Report
+volumes:
+  - name: efs-logs
+    persistentVolumeClaim:
+      claimName: efs-logs-pvc
+  - name: efs-eod-pvc
+    persistentVolumeClaim:
+      claimName: efs-eod-pvc
+  - name: s3-data-files
+    persistentVolumeClaim:
+      claimName: s3-config-files-pvc
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+service:
+  name: import-manager-svc
+  port: 9097
+  targetPort: 9097
+  protocol: TCP
+nodeSelector:
+  group: common
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10
+startupProbe:
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 20
+readinessProbe:
+  path: /im/areYouInReadyState
+  httpHeaders:
+    - name: Accept
+      value: '*/*'
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+livenessProbe:
+  path: /im/actuator/health/liveness
+  port: 9097
+  periodSeconds: 30
+  timeoutSeconds: 15
+  failureThreshold: 1

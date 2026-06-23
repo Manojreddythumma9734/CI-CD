@@ -1,0 +1,5 @@
+apiVersion: v2
+name: config-server
+description: A Helm chart for deploying config-server
+version: 0.1.0
+appVersion: "v21"

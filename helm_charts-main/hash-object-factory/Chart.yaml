@@ -1,0 +1,5 @@
+apiVersion: v2
+name: hash-object-factory
+description: A Helm chart for deploying hash-object-factory
+version: 0.1.0
+appVersion: "prime360novac" 

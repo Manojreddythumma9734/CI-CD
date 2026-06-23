@@ -1,0 +1,107 @@
+image:
+  repository: 783764580882.dkr.ecr.ap-south-1.amazonaws.com/prime360novac/ml
+  tag: 3dfb9e0aad87020dbbc0f1815612746952d9e1fb
+  pullPolicy: Always
+imagePullSecrets:
+  - name: docker-registry
+terminationGracePeriodSeconds: 120
+preStopHook:
+  sleepSeconds: 90
+container:
+  name: ml
+  port: 9007
+resources:
+  limits:
+    # cpu: 2000m
+    memory: 700Mi
+  requests:
+    cpu: 2000m
+    memory: 700Mi
+env:
+  - name: SPRING_CONFIG_IMPORT
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: SPRING_CONFIG_IMPORT
+  - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+    valueFrom:
+      configMapKeyRef:
+        name: config-eureka-cm
+        key: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+        #  - name: PRIMEVER_URL
+        #    value: "http://k8s-istiosys-istioing-8ce913cdd6-1933164099.ap-south-1.elb.amazonaws.com:80/primever"
+  - name: JAVA_OPTS
+    value: "-XX:InitialRAMPercentage=80.0 -XX:MaxRAMPercentage=80.0"
+volumeMounts:
+  - mountPath: /app/logs
+    name: efs-logs
+    subPath: ml
+volumes:
+  - name: efs-logs
+    persistentVolumeClaim:
+      claimName: efs-logs-pvc
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+service:
+  name: ml-svc
+  port: 9007
+  targetPort: 9007
+  protocol: TCP
+nodeSelector:
+  group: common
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 30
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 10
+startupProbe:
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 20
+readinessProbe:
+  path: /ml/areYouInReadyState
+  httpHeaders:
+    - name: Accept
+      value: '*/*'
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 3
+livenessProbe:
+  path: /ml/actuator/health/liveness
+  port: 9007
+  periodSeconds: 30
+  timeoutSeconds: 15
+  failureThreshold: 1

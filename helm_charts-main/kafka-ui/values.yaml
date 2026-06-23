@@ -1,0 +1,53 @@
+replicaCount: 1
+
+image:
+  repository: provectuslabs/kafka-ui
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+kafka:
+  brokers: "b-3.mskclusterprime360nov.8a4mk2.c4.kafka.ap-south-1.amazonaws.com:9092,b-2.mskclusterprime360nov.8a4mk2.c4.kafka.ap-south-1.amazonaws.com:9092,b-1.mskclusterprime360nov.8a4mk2.c4.kafka.ap-south-1.amazonaws.com:9092"
+#"kafka-cluster-svc.prime360novac.svc.cluster.local:9092"
+  clusterName: "msk-cluster-prime360novac"
+
+env:
+  - name: KAFKA_CLUSTERS_0_SECURITY_PROTOCOL
+    value: "PLAINTEXT"
+  - name: KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL
+    value: "PLAINTEXT"
+  - name: KAFKA_CLUSTERS_0_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM
+    value: ""
+  - name: DYNAMIC_CONFIG_ENABLED
+    value: "true"
+  - name: KAFKA_CLUSTERS_0_READONLY
+    value: "false"
+  - name: KAFKA_CLUSTERS_0_DISABLE_LOG_DIRS_COLLECTION
+    value: "false"
+  - name: SERVER_SERVLET_CONTEXT_PATH
+    value: "/kafka-ui"
+nodeSelector:
+  group: observability
+# Pod-level securityContext
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 3000
+  fsGroup: 3000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level securityContext
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+
